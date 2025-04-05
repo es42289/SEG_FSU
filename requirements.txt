@@ -1,0 +1,10 @@
+altair
+branca
+folium
+numpy
+pandas
+snowflake_connector_python
+snowflake_snowpark_python
+streamlit
+streamlit_folium
+streamlit-aggrid
