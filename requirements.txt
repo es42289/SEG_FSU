@@ -1,0 +1,12 @@
+altair
+branca
+folium
+numpy
+pandas
+python-dateutil
+snowflake-connector-python
+snowflake-snowpark-python
+streamlit
+streamlit-folium
+streamlit-aggrid
+plotly
