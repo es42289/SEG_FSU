@@ -101,7 +101,6 @@ def load_wells(owners):
 @st.cache_data(ttl=600)
 def get_filtered_well_data(well_ids):
     session = get_snowflake_session()
-    """Query well input view based on list of API_10_EXPLODED (dashless IDs)"""
     try:
         # Make sure we have something to query
         if not well_ids or len(well_ids) == 0:
@@ -133,7 +132,7 @@ def get_filtered_well_data(well_ids):
     except Exception as e:
         st.error(f"Error fetching well data: {e}")
         session.close()
-        return None
+        return pd.DataFrame()
 
 @st.cache_data(ttl=600)
 def get_production_data(selected_wells):
@@ -423,13 +422,15 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
                 theme='streamlit'
             )
             try:
-                selected_key = grid_response['selected_rows']['API'].values[0]
+                st.session_state['selected_well'] = grid_response['selected_rows']['API'].values[0]
+                raw_prod_data_df = get_production_data([st.session_state['selected_well']])
+                decline_parameters = get_decline_parameters([st.session_state['selected_well']])
             except:
-                selected_key = wells_df.iloc[0]['API']
+                st.session_state['selected_well'] = wells_df.iloc[0]['API']
 
     ## calc and collect forecast df
-    prd = raw_prod_data_df[raw_prod_data_df['API_UWI'] == selected_key].copy()
-    params = decline_parameters[decline_parameters['API_UWI'] == selected_key].copy().iloc[0].to_dict()
+    prd = raw_prod_data_df[raw_prod_data_df['API_UWI'] == st.session_state['selected_well']].copy()
+    params = decline_parameters[decline_parameters['API_UWI'] == st.session_state['selected_well']].copy().iloc[0].to_dict()
     with middle_column:
         st.markdown("## Decline Parameters")
         with st.expander('Gas Decline Parameters', expanded=False):
@@ -465,7 +466,7 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
                 params['GAS_USER_QI'] = st.slider(
                     f"Qi",
                     min_value=max(1.0, 0.75*min(prd[prd['PRODUCINGMONTH']>datetime(params['FCST_START_GAS'].year, params['FCST_START_GAS'].month, params['FCST_START_GAS'].day)]['GASPROD_MCF'])),
-                    max_value=1.25*max(prd[prd['PRODUCINGMONTH']>datetime(params['FCST_START_GAS'].year, params['FCST_START_GAS'].month, params['FCST_START_GAS'].day)]['GASPROD_MCF']),
+                    max_value=max(2.0,1.25*max(prd[prd['PRODUCINGMONTH']>datetime(params['FCST_START_GAS'].year, params['FCST_START_GAS'].month, params['FCST_START_GAS'].day)]['GASPROD_MCF'])),
                     value=prd[prd['PRODUCINGMONTH']==datetime(params['FCST_START_GAS'].year, params['FCST_START_GAS'].month, params['FCST_START_GAS'].day)]['GASPROD_MCF'].values[0],
                     step=1.0,
                     key = 'GAS_USER_QI',
@@ -659,7 +660,7 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
 
         final_chart = final_chart + oil_rule + gas_rule
         ## well info above chart
-        record_well_data = filtered_wells[filtered_wells['API_UWI'] == selected_key].iloc[0]
+        record_well_data = filtered_wells[filtered_wells['API_UWI'] == st.session_state['selected_well']].iloc[0]
         # st.markdown(f"{record_well_data['API_UWI']}")
         st.markdown(f"**Operator:** {record_well_data['ENVOPERATOR']} &nbsp;\
                     **Well Name:** {record_well_data['WELLNAME']}")
@@ -683,49 +684,54 @@ if 'selected_wells' not in st.session_state:
 if 'filtered_wells' not in st.session_state:
     st.session_state['filtered_wells'] = None
 
+# Initialize session state for filtered wells
+if 'selected_well' not in st.session_state:
+    st.session_state['selected_well'] = None
 ##########################################
 # SECTION 8: WELL FILTER AND MAP SECTION
 ##########################################
-st.logo('logo.png')
+try:
+    st.logo('logo.png')
+except:
+    pass
 ## title
 st.title("Forecast Editor by Owner")
-## load the distinct owners list for the selection drop down
-owners = load_owners()
-## make labels for the owner selection dropdown
-owners["alias"] = owners.apply(lambda row: make_alias(row["Owner"], row["WELL_COUNT"]), axis=1)
 
-## create alias to owner dictionary
-alias_to_owner = dict(zip(owners["alias"], owners["Owner"]))
-
-## selection box for owner
-selected_alias = st.multiselect("Filter by Owner", options=list(alias_to_owner.keys()))
-## convert the alias back to the owner name
-owners = [alias_to_owner[x] for x in selected_alias]
-st.divider()
-## collect the wells associated to the owner
-well_ids = load_wells(owners)["API_10_EXPLODED"].tolist()    
 # Create a two-column layout with filters on left and map on right
 filter_column, map_column = st.columns([1, 1])
 
 # Put all filters in the left column
-with filter_column:
+with filter_column:        
     st.subheader("Filter Wells")
-    
-    # Load owner well header data
-    well_data = get_filtered_well_data(well_ids)
-    # Check if well_data is not None and has data
-    if well_data is not None:
-        # Initialize filtered_wells to be the original well data
-        filtered_wells = well_data.copy()
+    ## set two columns for filters
+    filter_column_col1, filter_column_col2 = st.columns([1, 1])
+    with filter_column_col1:
+        ## load the distinct owners list for the selection drop down
+        owners = load_owners()
+        ## make labels for the owner selection dropdown
+        owners["alias"] = owners.apply(lambda row: make_alias(row["Owner"], row["WELL_COUNT"]), axis=1)
+        ## create alias to owner dictionary
+        alias_to_owner = dict(zip(owners["alias"], owners["Owner"]))
+        ## selection box for owner
+        selected_alias = st.multiselect("Filter by Owner", options=list(alias_to_owner.keys()))
+        ## convert the alias back to the owner name
+        owners = [alias_to_owner[x] for x in selected_alias]
+        ## collect the wells associated to the owner
+        start = datetime.now()##delete
+        well_ids = load_wells(owners)["API_10_EXPLODED"].tolist()    
         
-        ## set two columns for filters
-        filter_column_col1, filter_column_col2 = st.columns([1, 1])
-        with filter_column_col1:
+        # Load owner well header data
+        well_data = get_filtered_well_data(well_ids)
+        # Check if well_data is not None and has data
+        if well_data is not None:
+            # Initialize filtered_wells to be the original well data
+            filtered_wells = well_data.copy()
             # Define filter columns in the specified order
             filters = [
                 "ENVOPERATOR",
                 "API_UWI",
                 "ENVWELLSTATUS",
+                "WELLNAME"
             ]
             # Apply filters - using full width since we're in a column already
             for filter in filters:
@@ -744,24 +750,9 @@ with filter_column:
                         st.session_state['filtered_wells'] = filtered_wells
                         st.session_state['selected_wells'] = filtered_wells["API_UWI"].tolist()
 
-            # Add range sliders for production data
-            # Oil production range slider
-            if "CUMOIL_BBL" in well_data.columns:
-                max_oil_value = int(well_data["CUMOIL_BBL"].max())
-                oil_range = st.slider(
-                    "Total Oil Production (BBL)", 
-                    min_value=0, 
-                    max_value=max_oil_value, 
-                    value=(0, max_oil_value)
-                )
-                filtered_wells = filtered_wells[(filtered_wells["CUMOIL_BBL"] >= oil_range[0]) & (filtered_wells["CUMOIL_BBL"] <= oil_range[1])]
-                st.session_state['filtered_wells'] = filtered_wells
-                st.session_state['selected_wells'] = filtered_wells["API_UWI"].tolist()
-
         with filter_column_col2:
             # Define filter columns in the specified order
             filters = [
-                "WELLNAME", 
                 "TRAJECTORY", 
                 "COUNTY", 
             ]
@@ -796,29 +787,43 @@ with filter_column:
                 st.session_state['filtered_wells'] = filtered_wells
                 st.session_state['selected_wells'] = filtered_wells["API_UWI"].tolist()
 
-        # Total producing months range slider
-        if "TOTALPRODUCINGMONTHS" in well_data.columns:
-            max_months = int(well_data["TOTALPRODUCINGMONTHS"].max())
-            months_range = st.slider(
-                "Total Producing Months", 
-                min_value=0, 
-                max_value=max_months, 
-                value=(0, max_months)
-            )
-            filtered_wells = filtered_wells[(filtered_wells["TOTALPRODUCINGMONTHS"] >= months_range[0]) & (filtered_wells["TOTALPRODUCINGMONTHS"] <= months_range[1])]
-            
-        # Display filtered well count
-        st.write(f"Filtered Wells: {len(filtered_wells)}")
-        st.write('')
-        st.write('')
+            # Add range sliders for production data
+            # Oil production range slider
+            if "CUMOIL_BBL" in well_data.columns:
+                max_oil_value = int(well_data["CUMOIL_BBL"].max())
+                oil_range = st.slider(
+                    "Total Oil Production (BBL)", 
+                    min_value=0, 
+                    max_value=max_oil_value, 
+                    value=(0, max_oil_value)
+                )
+                filtered_wells = filtered_wells[(filtered_wells["CUMOIL_BBL"] >= oil_range[0]) & (filtered_wells["CUMOIL_BBL"] <= oil_range[1])]
+                st.session_state['filtered_wells'] = filtered_wells
+                st.session_state['selected_wells'] = filtered_wells["API_UWI"].tolist()
+
+            # Total producing months range slider
+            if "TOTALPRODUCINGMONTHS" in well_data.columns:
+                max_months = int(well_data["TOTALPRODUCINGMONTHS"].max())
+                months_range = st.slider(
+                    "Total Producing Months", 
+                    min_value=0, 
+                    max_value=max_months, 
+                    value=(0, max_months)
+                )
+                filtered_wells = filtered_wells[(filtered_wells["TOTALPRODUCINGMONTHS"] >= months_range[0]) & (filtered_wells["TOTALPRODUCINGMONTHS"] <= months_range[1])]
+                
+            # Display filtered well count
+            st.write(f"Filtered Wells: {len(filtered_wells)}")
+            st.write('')
+            st.write('')
 
         # Show a sample of filtered wells in a table below the map
         with st.expander("Filtered Wells Sample", expanded=False):
             display_cols = ["API_UWI", "WELLNAME", "ENVOPERATOR", "COUNTY", "CUMOIL_BBL", "CUMGAS_MCF"]
             display_cols = [col for col in display_cols if col in filtered_wells.columns]
             st.dataframe(filtered_wells[display_cols].head(10000), height = 250)
-    else:
-        st.warning("Could not load well data for filtering.")
+    # else:
+    #     st.warning("Could not load well data for filtering.")
 # Put the map in the right column
 with map_column:
     st.subheader("Well Map")
@@ -892,8 +897,8 @@ st.title("Single Well Data Viewer & Editor")
 if st.session_state['filtered_wells'] is not None:
     ##query for prd and decline parameters for filtered wells
     wells_list = st.session_state['filtered_wells']['API_UWI'].tolist()
-    raw_prod_data_df = get_production_data(wells_list)
-    decline_parameters = get_decline_parameters(wells_list)
+    # raw_prod_data_df = get_production_data(wells_list)
+    # decline_parameters = get_decline_parameters(wells_list)
     # Create a DataFrame with API and Well Name
     wells_data = []
     for well in wells_list:
@@ -909,15 +914,19 @@ if st.session_state['filtered_wells'] is not None:
         })
     wells_df = pd.DataFrame(wells_data)
 
-    ## limit to only rwos with production data
-    wells_df = wells_df[wells_df['API'].isin(raw_prod_data_df['API_UWI'])]
+    # ## limit to only rwos with production data
+    # wells_df = wells_df[wells_df['API'].isin(raw_prod_data_df['API_UWI'])]
     ##default select first well in list
-    selected_key = wells_df.iloc[0]['API']
-    record = decline_parameters[decline_parameters['API_UWI'] == selected_key].iloc[0]
-    record_well_data = filtered_wells[filtered_wells['API_UWI'] == selected_key].iloc[0]
+    # selected_key = wells_df.iloc[0]['API']
+    st.session_state['selected_well'] = wells_df.iloc[0]['API']
+    # selected_key = st.session_state['selected_well']
+    raw_prod_data_df = get_production_data([st.session_state['selected_well']])
+    decline_parameters = get_decline_parameters([st.session_state['selected_well']])
+    record = decline_parameters[decline_parameters['API_UWI'] == st.session_state['selected_well']].iloc[0]
+    record_well_data = filtered_wells[filtered_wells['API_UWI'] == st.session_state['selected_well']].iloc[0]
 else:
-    st.info("No wells filtered. Use the filter section to select wells.")
-    selected_key = None
+    st.info("FIlter wells further to narrow results.")
+    st.session_state['selected_well'] = None
 
 if not decline_parameters.empty and 'API_UWI' in decline_parameters.columns:
     chart_data, params, prd = sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters)
@@ -970,7 +979,7 @@ if not decline_parameters.empty and 'API_UWI' in decline_parameters.columns:
         st.markdown("### Download Forecast")
         csv = prd.to_csv(index=False)
         b64 = base64.b64encode(csv.encode()).decode()
-        href = f'<a href="data:file/csv;base64,{b64}" download="{selected_key}_forecast.csv">Download Forecast CSV</a>'
+        # href = f'<a href="data:file/csv;base64,{b64}" download="{st.session_state['selected_well']}_forecast.csv">Download Forecast CSV</a>'
         st.markdown(href, unsafe_allow_html=True)
 
 
