@@ -434,18 +434,13 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
     with middle_column:
         st.markdown("## Decline Parameters")
         with st.expander('Gas Decline Parameters', expanded=False):
-            ## DECLINE TYPE SELECTOR
-            gas_decl_type_options = ['EXP','HYP']
-            default_index_gas_decl_typ = gas_decl_type_options.index(params['GAS_DECLINE_TYPE'])
-            params['GAS_DECLINE_TYPE'] = st.radio("Choose one:", gas_decl_type_options, index = default_index_gas_decl_typ, horizontal = True)
-
             mid_left_col, mid_right_col = st.columns([1, 1])
             with mid_left_col:
                 ## forecast start date month selector
                 # Set the range of the slider
                 start_date = prd['PRODUCINGMONTH'].min().date()#datetime(2015, 1, 1).date() 
                 end_date = datetime.today().date()
-
+            
                 # Generate a list of dates in 1-month increments
                 dates = []
                 current = start_date
@@ -470,10 +465,25 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
                     value=prd[prd['PRODUCINGMONTH']==datetime(params['FCST_START_GAS'].year, params['FCST_START_GAS'].month, params['FCST_START_GAS'].day)]['GASPROD_MCF'].values[0],
                     step=1.0,
                     key = 'GAS_USER_QI',
-                    # help="Select the initial production rate (Qi) for the forecast."
+                    help="Select the initial production rate (Qi) for the forecast."
+                )
+
+                ## gas qmin user input
+                params['GAS_Q_MIN'] = st.slider(
+                    f"Qmin",
+                    min_value = 10.0,
+                    max_value = 1000.0,
+                    value = 30.0,
+                    step=10.0,
+                    key = 'GAS_Q_MIN',
+                    help="Select the minimum production rate for the well"
                 )
 
             with mid_right_col:
+                ## DECLINE TYPE SELECTOR
+                gas_decl_type_options = ['EXP','HYP']
+                default_index_gas_decl_typ = gas_decl_type_options.index(params['GAS_DECLINE_TYPE'])
+                params['GAS_DECLINE_TYPE'] = st.radio("Choose one:", gas_decl_type_options, index = default_index_gas_decl_typ, horizontal = True)
                 ## gas Di user input
                 ## range conditional on Hyp or Exp
                 if params['GAS_DECLINE_TYPE'] == 'HYP':
@@ -506,11 +516,6 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
                         # help="Select the initial decline rate (Di) for the forecast."
                     )
         with st.expander('Oil Decline Parameters', expanded=False):
-            ## DECLINE TYPE SELECTOR
-            gas_decl_type_options = ['EXP','HYP']
-            default_index_gas_decl_typ = gas_decl_type_options.index(params['OIL_DECLINE_TYPE'])
-            params['OIL_DECLINE_TYPE'] = st.radio("Choose one:", gas_decl_type_options, index = default_index_gas_decl_typ, key = 'OIL_DECLINE_TYPE', horizontal = True)
-
             mid_left_col, mid_right_col = st.columns([1, 1])
             with mid_left_col:
                 ## forecast start date month selector
@@ -542,7 +547,22 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
                     key = 'oil_user_qi',
                     # help="Select the initial production rate (Qi) for the forecast."
                 )
+                ## gas qmin user input
+                params['OIL_Q_MIN'] = st.slider(
+                    f"Qmin",
+                    min_value = 0.0,
+                    max_value = 100.0,
+                    value = 5.0,
+                    step=1.0,
+                    key = 'OIL_Q_MIN',
+                    help="Select the minimum production rate for the well"
+                )
             with mid_right_col:
+                ## DECLINE TYPE SELECTOR
+                gas_decl_type_options = ['EXP','HYP']
+                default_index_gas_decl_typ = gas_decl_type_options.index(params['OIL_DECLINE_TYPE'])
+                params['OIL_DECLINE_TYPE'] = st.radio("Choose one:", gas_decl_type_options, index = default_index_gas_decl_typ, key = 'OIL_DECLINE_TYPE', horizontal = True)
+
                 ## gas Di user input
                 ## range conditional on Hyp or Exp
                 if params['OIL_DECLINE_TYPE'] == 'HYP':
@@ -676,17 +696,15 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
 ##########################################
 # Initialize variables for decline calculation constants for single well
 
-# Initialize session state for selected wells
 if 'selected_wells' not in st.session_state:
     st.session_state['selected_wells'] = []
 
-# Initialize session state for filtered wells
 if 'filtered_wells' not in st.session_state:
     st.session_state['filtered_wells'] = None
 
-# Initialize session state for filtered wells
 if 'selected_well' not in st.session_state:
     st.session_state['selected_well'] = None
+
 ##########################################
 # SECTION 8: WELL FILTER AND MAP SECTION
 ##########################################
@@ -980,10 +998,10 @@ if not decline_parameters.empty and 'API_UWI' in decline_parameters.columns:
         csv = prd.to_csv(index=False)
         b64 = base64.b64encode(csv.encode()).decode()
         # href = f'<a href="data:file/csv;base64,{b64}" download="{st.session_state['selected_well']}_forecast.csv">Download Forecast CSV</a>'
-        st.markdown(href, unsafe_allow_html=True)
+        # st.markdown(href, unsafe_allow_html=True)
 
 
-# st.write(params.values())
-# st.write(prd)
+st.write(params)
+st.write(prd)
 # st.write(melted_data)
-# st.write(chart_data)
+st.write(chart_data)
