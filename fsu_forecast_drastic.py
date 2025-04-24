@@ -14,17 +14,19 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 import plotly.express as px
+import folium
+from streamlit_folium import st_folium
 ## delete below
 import snowflake.connector
 from snowflake.snowpark.session import Session
 
 # Set Streamlit Page Configuration with wider layout
 st.set_page_config(
-    page_title="Well Data Viewer",
+    page_title="Single Well Decline Editor",
     layout="wide",
+    page_icon="🛢️",
     initial_sidebar_state="collapsed"  # Start with sidebar collapsed for more space
 )
-
 # Make the app wider with custom CSS
 st.markdown("""
 <style>
@@ -160,7 +162,7 @@ def get_production_data(selected_wells):
         session.close()
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
+# @st.cache_data(ttl=600)
 def get_decline_parameters(selected_wells):
     session = get_snowflake_session()
     selected_wells_query_string = ", ".join(f"'{api}'" for api in selected_wells)
@@ -352,6 +354,45 @@ def calc_decline(prd, params):
 def cached_decline(prd, params):
     return calc_decline(prd, params)
 
+# @st.fragment()
+# def map_wells(map_data):
+#     map_data['TYPE'] = map_data.apply(
+#         lambda row: "OIL" if row['CUMOIL_BBL'] > row['CUMGAS_MCF'] else "GAS", axis=1
+#     )
+#     map_data['BOE_BBL'] = map_data['CUMOIL_BBL'] + (map_data['CUMGAS_MCF'] / 6)
+
+#     map_data = map_data.dropna(subset=['LATITUDE', 'LONGITUDE'])
+
+#     if not map_data.empty:
+#         # Normalize BOE_BBL to 1-10
+#         min_boe = map_data['BOE_BBL'].min()
+#         max_boe = map_data['BOE_BBL'].max()
+#         map_data['radius'] = 1 + 29 * (map_data['BOE_BBL'] - min_boe) / (max_boe - min_boe)
+
+#         m = folium.Map(
+#             location=[map_data['LATITUDE'].mean(), map_data['LONGITUDE'].mean()],
+#             zoom_start=10,
+#             tiles="CartoDB positron"
+#         )
+
+#         for _, row in map_data.iterrows():
+#             color = 'green' if row['TYPE'] == 'OIL' else 'red'
+#             popup_text = "<br>".join([f"{col}: {row[col]}" for col in map_data.columns])
+#             tooltip_text = "<br>".join([f"<b>{col}</b>: {row[col]}" for col in map_data.columns])
+            
+#             folium.CircleMarker(
+#                 location=[row['LATITUDE'], row['LONGITUDE']],
+#                 radius=row['radius'],
+#                 color='black',
+#                 weight=1,
+#                 fill=True,
+#                 fill_color=color,
+#                 fill_opacity=0.5,
+#                 popup=folium.Popup(popup_text, max_width=300),
+#                 tooltip=folium.Tooltip(tooltip_text)
+#             ).add_to(m)
+
+#         st_folium(m, width=800, height=600)
 @st.fragment()
 def map_wells(map_data):
     map_data['TYPE'] = map_data.apply(
@@ -364,7 +405,13 @@ def map_wells(map_data):
     map_data = map_data.dropna()
     
     if not map_data.empty:
-        # Sample plot with mapbox
+        # Create a custom hover text with "bold" column names using <b> tags
+        map_data['hover_text'] = map_data.apply(
+            lambda row: "<br>".join([
+                f"<b>{col}</b>: {row[col]}" for col in well_data.columns
+            ]), axis=1
+        )
+
         fig = px.scatter_mapbox(
             map_data,
             lat="LATITUDE",
@@ -372,18 +419,22 @@ def map_wells(map_data):
             color="TYPE",
             size="BOE_BBL",
             color_discrete_map={
-                "OIL": "green",
-                "GAS": "red"
+            "OIL": "lightgreen",
+            "GAS": "red"
             },
-            hover_data=well_data.columns,
-            # zoom=4,
-            # height=700
+            # hover_data=well_data.columns,
+            hover_name="hover_text",  # forces rich hover display
+            hover_data=None  # disables auto columns
+        )
+        # Enable HTML in hover (hovertemplate bypasses auto format)
+        fig.update_traces(
+            hovertemplate="%{hovertext}<extra></extra>"
         )
 
         # Set the mapbox style (you can change this dynamically later)
         fig.update_layout(
-            mapbox_style="carto-positron",  # Options: "satellite-streets", ,"open-street-map" etc.
-            mapbox_accesstoken="your_mapbox_token_if_needed",
+            mapbox_style="satellite-streets",#"open-street-map",#"carto-positron",  # Options: "satellite-streets", ,"open-street-map" etc.
+            mapbox_accesstoken="pk.eyJ1IjoiZXM0MjI4OSIsImEiOiJjbTl1dGdsNzQwZDh6Mm1vc25hNWxwMzJiIn0.6sgv-zhF_RmEOm2C-B7XUA",
             margin={"r":0,"t":0,"l":0,"b":0}
         )
         fig.update_layout(
@@ -596,12 +647,8 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
                         step=0.01,
                         key = 'oil_b_factor_hyp'
                         # help="Select the initial decline rate (Di) for the forecast."
-                    )    
-        if st.button("Save decline Parameters", key="save_decline", help="Save decline parameters to the ECON_INPUT table in Snowflake"):
-            update_database_record(params)
-    with right_column:
-        st.markdown("## Forecast Chart")
-        chart_data = calc_decline(prd, params)
+                    )  
+        chart_data = calc_decline(prd, params)  
         chart_data[['LIQUIDSPROD_BBL', 'GASPROD_MCF']] = chart_data[['LIQUIDSPROD_BBL', 'GASPROD_MCF']].replace(0, None)
         chart_data = chart_data.rename(columns={
             'LIQUIDSPROD_BBL': 'Oil (BBL)',
@@ -609,6 +656,63 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
             'OilFcst_BBL': 'Oil Forecast (BBL)',
             'GasFcst_MCF': 'Gas Forecast (MCF)'
         })
+        with st.expander("Forecast Statistics", expanded=False):
+            # Calculate forecast totals
+            gas_forecast_total = chart_data['Gas Forecast (MCF)'].sum()
+            
+            # Calculate forecast years based on monthly data
+            forecast_months = len(prd)
+            forecast_years = forecast_months / 12
+            
+            # Create three columns for oil, gas, and general forecast stats
+            fcst_col1, fcst_col2 = st.columns(2)
+            
+            with fcst_col1:
+                st.markdown("#### Gas Statistics")
+                gas_hist_total = chart_data['Gas (MCF)'].sum()
+                gas_fcst_total = chart_data[chart_data['PRODUCINGMONTH']>datetime.today()]['Gas Forecast (MCF)'].sum()
+                last_gas_date = chart_data[~chart_data['Gas (MCF)'].isna()]['PRODUCINGMONTH'].max()
+                gas_eur = gas_hist_total + gas_fcst_total + chart_data[\
+                    (chart_data['PRODUCINGMONTH']> datetime(last_gas_date.year, last_gas_date.month, last_gas_date.day))\
+                    &\
+                    (chart_data['PRODUCINGMONTH']< datetime.today())\
+                        ]['Gas Forecast (MCF)'].sum()
+
+                st.metric("Historic Gas Total (MCF)", f"{gas_hist_total:,.0f}")
+                st.metric("Gas EUR (MCF)", f"{gas_eur:,.0f}")
+                st.metric(f"Forecasted Gas Recovery (starting {date(date.today().year, date.today().month+1, 1)})", f"{gas_fcst_total:,.0f}")
+                st.metric(f"Forecasted Qmin Date", str(chart_data[chart_data['Gas Forecast (MCF)']>0]['PRODUCINGMONTH'].max().date()))
+                # st.markdown(f"<div style='font-size:24px;'>Gas is <b>{1-(gas_fcst_total/gas_eur):.0%}</b> Depleted</div>", unsafe_allow_html=True)
+
+            with fcst_col2:
+                st.markdown("#### Oil Statistics")
+                oil_hist_total = chart_data['Oil (BBL)'].sum()
+                oil_fcst_total = chart_data[chart_data['PRODUCINGMONTH']>datetime.today()]['Oil Forecast (BBL)'].sum()
+                last_oil_date = chart_data[~chart_data['Oil (BBL)'].isna()]['PRODUCINGMONTH'].max()
+                oil_eur = oil_hist_total + oil_fcst_total + chart_data[\
+                    (chart_data['PRODUCINGMONTH']> datetime(last_gas_date.year, last_gas_date.month, last_gas_date.day))\
+                    &\
+                    (chart_data['PRODUCINGMONTH']< datetime.today())\
+                        ]['Oil Forecast (BBL)'].sum()
+                st.metric("Historic Oil Total (MCF)", f"{oil_hist_total:,.0f}")
+                st.metric("Oil EUR (MCF)", f"{oil_eur:,.0f}")
+                st.metric(f"Forecasted Oil Recovery (starting {date(date.today().year, date.today().month+1, 1)})", f"{oil_fcst_total:,.0f}")
+                st.metric(f"Forecasted Qmin Date", str(chart_data[chart_data['Oil Forecast (BBL)']>0]['PRODUCINGMONTH'].max().date()))
+                # st.markdown(f"<div style='font-size:24px;'>Oil is <b>{1-(oil_fcst_total/oil_eur):.0%}</b> Depleted</div>", unsafe_allow_html=True)
+        
+            # Add a download button for the forecast data
+            st.markdown("### Download Forecast")
+            csv = prd.to_csv(index=False)
+            b64 = base64.b64encode(csv.encode()).decode()
+            download_well = st.session_state['selected_well']
+            href = f'<a href="data:file/csv;base64,{b64}" download="{download_well}_forecast.csv">Download Forecast CSV</a>'
+            st.markdown(href, unsafe_allow_html=True)
+        st.divider()     
+        if st.button("Save decline Parameters", key="save_decline", help="Save decline parameters to the ECON_INPUT table in Snowflake"):
+            update_database_record(params)
+            decline_parameters = get_decline_parameters([st.session_state['selected_well']])
+    with right_column:
+        st.markdown("## Forecast Chart")
         # Melt the DataFrame for Altair
         melted_data = chart_data.melt(
             id_vars=['PRODUCINGMONTH'], 
@@ -627,7 +731,7 @@ def sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters):
         # Add selection based on legend
         chart = alt.Chart(melted_data).encode(
             x=alt.X('Production Month:T', title='Production Month'),
-            y=alt.Y('Volume:Q', scale= alt.Scale(type='log', domainMin=1), title='check'),
+            y=alt.Y('Volume:Q', scale= alt.Scale(type='log', domainMin=1), title='MCF or BBL per Month'),
             color=alt.Color('legend_group:N', 
                             scale=alt.Scale(domain=list(color_mapping.keys()), 
                                             range=list(color_mapping.values())),
@@ -713,7 +817,7 @@ try:
 except:
     pass
 ## title
-st.title("Forecast Editor by Owner")
+st.title("Single Well Decline Editor")
 
 # Create a two-column layout with filters on left and map on right
 filter_column, map_column = st.columns([1, 1])
@@ -949,59 +1053,9 @@ else:
 if not decline_parameters.empty and 'API_UWI' in decline_parameters.columns:
     chart_data, params, prd = sliders_and_chart(wells_df, raw_prod_data_df, decline_parameters)
 
-    # if st.button("Save decline Parameters", key="save_decline", help="Save decline parameters to the ECON_INPUT table in Snowflake"):
-    #     update_database_record(params)
-    with st.expander("Forecast Statistics", expanded=True):
-        # Calculate forecast totals
-        gas_forecast_total = chart_data['Gas Forecast (MCF)'].sum()
-        
-        # Calculate forecast years based on monthly data
-        forecast_months = len(prd)
-        forecast_years = forecast_months / 12
-        
-        # Create three columns for oil, gas, and general forecast stats
-        fcst_col1, fcst_col2 = st.columns(2)
-        
-        with fcst_col1:
-            st.markdown("#### Gas Statistics")
-            gas_hist_total = chart_data['Gas (MCF)'].sum()
-            gas_fcst_total = chart_data[chart_data['PRODUCINGMONTH']>datetime.today()]['Gas Forecast (MCF)'].sum()
-            last_gas_date = chart_data[~chart_data['Gas (MCF)'].isna()]['PRODUCINGMONTH'].max()
-            gas_eur = gas_hist_total + gas_fcst_total + chart_data[\
-                (chart_data['PRODUCINGMONTH']> datetime(last_gas_date.year, last_gas_date.month, last_gas_date.day))\
-                &\
-                (chart_data['PRODUCINGMONTH']< datetime.today())\
-                    ]['Gas Forecast (MCF)'].sum()
-
-            st.metric("Historic Gas Total (MCF)", f"{gas_hist_total:,.0f}")
-            st.metric("Gas EUR (MCF)", f"{gas_eur:,.0f}")
-            st.metric(f"Forecasted Gas Recovery (starting {date(date.today().year, date.today().month+1, 1)})", f"{gas_fcst_total:,.0f}")
-            st.markdown(f"<div style='font-size:24px;'>Gas is <b>{1-(gas_fcst_total/gas_eur):.0%}</b> Depleted</div>", unsafe_allow_html=True)
-
-        with fcst_col2:
-            st.markdown("#### Oil Statistics")
-            oil_hist_total = chart_data['Oil (BBL)'].sum()
-            oil_fcst_total = chart_data[chart_data['PRODUCINGMONTH']>datetime.today()]['Oil Forecast (BBL)'].sum()
-            last_oil_date = chart_data[~chart_data['Oil (BBL)'].isna()]['PRODUCINGMONTH'].max()
-            oil_eur = oil_hist_total + oil_fcst_total + chart_data[\
-                (chart_data['PRODUCINGMONTH']> datetime(last_gas_date.year, last_gas_date.month, last_gas_date.day))\
-                &\
-                (chart_data['PRODUCINGMONTH']< datetime.today())\
-                    ]['Oil Forecast (BBL)'].sum()
-            st.metric("Historic Oil Total (MCF)", f"{oil_hist_total:,.0f}")
-            st.metric("Oil EUR (MCF)", f"{oil_eur:,.0f}")
-            st.metric(f"Forecasted Oil Recovery (starting {date(date.today().year, date.today().month+1, 1)})", f"{oil_fcst_total:,.0f}")
-            st.markdown(f"<div style='font-size:24px;'>Oil is <b>{1-(oil_fcst_total/oil_eur):.0%}</b> Depleted</div>", unsafe_allow_html=True)
-    
-        # Add a download button for the forecast data
-        st.markdown("### Download Forecast")
-        csv = prd.to_csv(index=False)
-        b64 = base64.b64encode(csv.encode()).decode()
-        # href = f'<a href="data:file/csv;base64,{b64}" download="{st.session_state['selected_well']}_forecast.csv">Download Forecast CSV</a>'
-        # st.markdown(href, unsafe_allow_html=True)
 
 
-st.write(params)
-st.write(prd)
-# st.write(melted_data)
-st.write(chart_data)
+# st.write(params)
+# st.write(prd)
+# # st.write(melted_data)
+# st.write(chart_data)
